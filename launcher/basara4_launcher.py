@@ -1053,11 +1053,11 @@ class Launcher(tk.Tk):
                 env["SPARTAN_GPU_ID"] = str(disc_idx)
             else:
                 env.pop("SPARTAN_GPU_ID", None)
-        avail_mb = check_commit_limit_mb()
-        if avail_mb is not None and avail_mb < 3200:
-            env["SPARTAN_DMEM_MB"] = "2048"
-        elif avail_mb is not None and avail_mb < 4608:
-            env["SPARTAN_DMEM_MB"] = "2560"
+        res = self.cfg.get("resolution", "native")
+        if res in ("1440p", "1800p", "4K"):
+            env["SPARTAN_DMEM_MB"] = "4800"
+        else:
+            env.pop("SPARTAN_DMEM_MB", None)
         if WINDOW_ICON.exists():
             env["SPARTAN_WINDOW_ICON"] = str(WINDOW_ICON)
         if MAPPING.exists():
@@ -1086,7 +1086,7 @@ class Launcher(tk.Tk):
 
         env["SPARTAN_INPUT_MODE"] = str(self.cfg.get("input_mode", "controller"))
 
-        # Internal render resolution for potato PCs (sub-1080p only)
+        # Internal 3D render resolution scaling for potato PCs (sub-1080p only)
         res = self.cfg.get("resolution", "native")
         sub_1080p_map = {
             "360p": "640x360",

@@ -93,9 +93,13 @@ def unlimited_fps(image):
 RENDER_PAT_1 = "41 c7 85 b8 00 00 00 80 07 00 00 41 c7 85 bc 00 00 00 38 04 00 00"
 RENDER_PAT_2 = "48 b8 80 07 00 00 38 04 00 00 49 89 85 b8 00 00 00"
 RENDER_PAT_3 = "48 b8 80 07 00 00 38 04 00 00 4a 89 84 2b 80 ab 07 01"
-RENDER_PAT_4 = "c7 83 c0 00 00 00 80 07 00 00 c7 83 c4 00 00 00 38 04 00 00"
-RENDER_PAT_5 = "c7 83 b8 00 00 00 80 07 00 00 c7 83 bc 00 00 00 38 04 00 00"
-UI_PAT_1     = "c7 80 80 00 00 00 80 07 00 00 c7 80 84 00 00 00 38 04 00 00"
+RENDER_PAT_4       = "c7 83 c0 00 00 00 80 07 00 00 c7 83 c4 00 00 00 38 04 00 00"
+RENDER_PAT_5       = "c7 83 b8 00 00 00 80 07 00 00 c7 83 bc 00 00 00 38 04 00 00"
+GARLIC_PAT         = "ba 09 00 00 00 b9 00 00 00 80 45 31 c0 41 b9 06 02 00 00"
+GUI_SCALE_CLAMP_PAT = "c5 fa 10 1d d7 28 61 00 c5 62 5d c4 c5 e2 5f ec"
+HUD_PROJ_CLAMP_PAT = "c5 fa 10 25 41 bd ed 00 c5 da 5d c9 c5 fa 10 25 39 bd ed 00 c5 da 5d db"
+ICON_SCALE_W_PAT   = "81 f9 81 07 00 00 7c 22 48 63 d1"
+ICON_SCALE_H_PAT   = "3d 39 04 00 00 7c 22 48 63 c8"
 
 RESOLUTION_SIZES = {
     "360p": (640, 360),
@@ -114,6 +118,14 @@ def resolution_patches(image, res_name):
     if res_name not in RESOLUTION_SIZES:
         return []
     w, h = RESOLUTION_SIZES[res_name]
+
+    # Sub-1080p resolutions must NOT patch eboot's framebuffer directly:
+    # MT Framework's cGUI layout is authored in 1080p coordinates; shrinking the guest
+    # framebuffer below 1080p zooms and crops the entire 2D UI (character select, menus, HUD).
+    # Sub-1080p performance scaling is handled cleanly by scene_targets (3D scene resolution scaling).
+    if w <= 1920 and h <= 1080:
+        return []
+
     writes = []
     wb = struct.pack('<I', w)
     hb = struct.pack('<I', h)
@@ -142,10 +154,31 @@ def resolution_patches(image, res_name):
         writes.append((off + 6, wb))
         writes.append((off + 16, hb))
 
-    # 6. UI size: mov dword ptr [rax+80h], W; mov dword ptr [rax+84h], H
-    for off in find(image, UI_PAT_1):
-        writes.append((off + 6, wb))
-        writes.append((off + 16, hb))
+    # 6. Keep HUD .gui authoring canvas at 1920x1080 (never overwrite [rax+80h]/[rax+84h]) and
+    #    scale cGUI's ResolutionAdjust clamp threshold ([14FD1E8h]) from 1.0f to (W / 1920.0f)
+    #    so both ScaleUp (mode 3/6/9) and ScaleDown (mode 4/7/10) HUD/minimap nodes scale together.
+    for off in find(image, GUI_SCALE_CLAMP_PAT):
+        disp, = struct.unpack_from('<i', image, off + 4)
+        writes.append((off + 8 + disp, struct.pack('<f', float(w) / 1920.0)))
+
+    # 7. Keep 3D-to-2D world projection (uGUINagure floating HP bars, uGUITarget lock-on) in
+    #    1920x1080 design space across all resolutions so cGUI scales it once to W x H.
+    for off in find(image, HUD_PROJ_CLAMP_PAT):
+        writes.append((off + 8, b'\xc5\xf8\x28\xcc'))
+        writes.append((off + 20, b'\xc5\xf8\x28\xdc'))
+
+    # 8. Bypass uGUIIcon's broken >1080p integer multiplier (W / 1920, H / 1080) since cGUI
+    #    already scales icon_ps4 (ResolutionAdjust=3) proportionally with stXXX_ps4 minimap.
+    for off in find(image, ICON_SCALE_W_PAT):
+        writes.append((off + 6, b'\xeb'))
+    for off in find(image, ICON_SCALE_H_PAT):
+        writes.append((off + 5, b'\xeb'))
+
+    # 9. Above 1080p (1440p/1800p/4K), expand MT Framework's Garlic GPU heap from 2048 MiB
+    #    (0x80000000) to 3584 MiB (0xE0000000) so 4K render targets never starve character textures.
+    if w > 1920 or h > 1080:
+        for off in find(image, GARLIC_PAT):
+            writes.append((off + 6, struct.pack('<I', 0xE0000000)))
 
     return writes
 
