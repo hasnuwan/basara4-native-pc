@@ -1057,7 +1057,13 @@ class Launcher(tk.Tk):
         if res in ("1440p", "1800p", "4K"):
             env["SPARTAN_DMEM_MB"] = "4800"
         else:
-            env.pop("SPARTAN_DMEM_MB", None)
+            avail_mb = check_commit_limit_mb()
+            if avail_mb is not None and avail_mb < 3200:
+                env["SPARTAN_DMEM_MB"] = "2048"
+            elif avail_mb is not None and avail_mb < 4608:
+                env["SPARTAN_DMEM_MB"] = "2560"
+            else:
+                env.pop("SPARTAN_DMEM_MB", None)
         if WINDOW_ICON.exists():
             env["SPARTAN_WINDOW_ICON"] = str(WINDOW_ICON)
         if MAPPING.exists():
@@ -1138,33 +1144,36 @@ class Launcher(tk.Tk):
         self.pending_text = text
 
     def _prepare_then_launch(self, game, exe, dlc_dir):
-        self.pending_text = "Starting…"
-        error = None
-        if not image_ready(game):
-            error = prepare_image(game, self._progress)
-        if not error:
-            self._progress("Preparing the DLC profile…")
-            error = prepare_content_profile(game, dlc_dir)
-        patch_args, notice = [], ""
-        selected_cheats = self.cfg.get("cheats", [])
-        chosen_res = self.cfg.get("resolution", "native")
-        needs_patching = (self.cfg["fps_limit"] != 60) or bool(selected_cheats) or (chosen_res != "native")
-        if not error and needs_patching:
-            try:
-                version = basara4_cheats.game_version(game) if selected_cheats else None
-                writes, notes = basara4_patches.build(
-                    OUT / "eboot.elf", OUT / "patches.bin", self.cfg["fps_limit"] != 60,
-                    cheats=selected_cheats, game_version=version, resolution=chosen_res)
-            except (OSError, ValueError) as patch_error:
-                error = f"Cannot prepare requested patches: {patch_error}"
-                writes, notes = [], []
+        try:
+            self.pending_text = "Starting…"
+            error = None
+            if not image_ready(game):
+                error = prepare_image(game, self._progress)
             if not error:
-                if writes:
-                    patch_args = ["--patches", str(OUT / "patches.bin")]
-            if not error and self.cfg["fps_limit"] != 60 and "unlimited fps" not in notes:
-                self.cfg["fps_limit"] = 60
-                notice = "Frame limiter not found in this eboot.bin: staying at 60.  "
-        self.pending = (error, game, exe, patch_args, notice, dlc_dir)
+                self._progress("Preparing the DLC profile…")
+                error = prepare_content_profile(game, dlc_dir)
+            patch_args, notice = [], ""
+            selected_cheats = self.cfg.get("cheats", [])
+            chosen_res = self.cfg.get("resolution", "native")
+            needs_patching = (self.cfg["fps_limit"] != 60) or bool(selected_cheats) or (chosen_res != "native")
+            if not error and needs_patching:
+                try:
+                    version = basara4_cheats.game_version(game) if selected_cheats else None
+                    writes, notes = basara4_patches.build(
+                        OUT / "eboot.elf", OUT / "patches.bin", self.cfg["fps_limit"] != 60,
+                        cheats=selected_cheats, game_version=version, resolution=chosen_res)
+                except (OSError, ValueError) as patch_error:
+                    error = f"Cannot prepare requested patches: {patch_error}"
+                    writes, notes = [], []
+                if not error:
+                    if writes:
+                        patch_args = ["--patches", str(OUT / "patches.bin")]
+                if not error and self.cfg["fps_limit"] != 60 and "unlimited fps" not in notes:
+                    self.cfg["fps_limit"] = 60
+                    notice = "Frame limiter not found in this eboot.bin: staying at 60.  "
+            self.pending = (error, game, exe, patch_args, notice, dlc_dir)
+        except Exception as exc:
+            self.pending = (f"Preparation failed: {exc}", game, exe, [], "", dlc_dir)
 
     def _wait_prepare(self):
         if self.pending is None:
