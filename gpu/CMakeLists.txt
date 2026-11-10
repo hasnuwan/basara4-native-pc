@@ -51,14 +51,45 @@ if (NOT magic_enum_FOUND)
     target_include_directories(magic_enum INTERFACE third_party/magic_enum/include
                                                     third_party/magic_enum/include/magic_enum)
 endif()
-find_package(tsl-robin-map REQUIRED)
+find_package(tsl-robin-map QUIET)
+if (NOT tsl-robin-map_FOUND AND NOT TARGET tsl::robin_map)
+    find_path(ROBIN_MAP_INCLUDE_DIR tsl/robin_map.h)
+    if (ROBIN_MAP_INCLUDE_DIR)
+        add_library(tsl-robin-map INTERFACE)
+        add_library(tsl::robin_map ALIAS tsl-robin-map)
+        target_include_directories(tsl-robin-map INTERFACE ${ROBIN_MAP_INCLUDE_DIR})
+    else()
+        include(FetchContent)
+        FetchContent_Declare(
+            robin_map
+            GIT_REPOSITORY https://github.com/Tessil/robin-map.git
+            GIT_TAG v1.3.0
+        )
+        FetchContent_MakeAvailable(robin_map)
+    endif()
+endif()
 find_package(VulkanMemoryAllocator CONFIG QUIET)
 if (NOT VulkanMemoryAllocator_FOUND)
-    # MSYS2 ships the header (include/vma/vk_mem_alloc.h) without a CMake package.
-    find_path(VMA_INCLUDE_DIR vk_mem_alloc.h PATH_SUFFIXES vma REQUIRED)
-    add_library(VulkanMemoryAllocator INTERFACE)
-    add_library(GPUOpen::VulkanMemoryAllocator ALIAS VulkanMemoryAllocator)
-    target_include_directories(VulkanMemoryAllocator INTERFACE ${VMA_INCLUDE_DIR})
+    find_path(VMA_INCLUDE_DIR vk_mem_alloc.h PATH_SUFFIXES vma)
+    if (VMA_INCLUDE_DIR)
+        add_library(VulkanMemoryAllocator INTERFACE)
+        add_library(GPUOpen::VulkanMemoryAllocator ALIAS VulkanMemoryAllocator)
+        target_include_directories(VulkanMemoryAllocator INTERFACE ${VMA_INCLUDE_DIR})
+    else()
+        include(FetchContent)
+        FetchContent_Declare(
+            VulkanMemoryAllocator
+            GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+            GIT_TAG v3.1.0
+        )
+        FetchContent_GetProperties(VulkanMemoryAllocator)
+        if(NOT vulkanmemoryallocator_POPULATED)
+            FetchContent_Populate(VulkanMemoryAllocator)
+            add_library(VulkanMemoryAllocator INTERFACE)
+            add_library(GPUOpen::VulkanMemoryAllocator ALIAS VulkanMemoryAllocator)
+            target_include_directories(VulkanMemoryAllocator INTERFACE ${vulkanmemoryallocator_SOURCE_DIR}/include)
+        endif()
+    endif()
 endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(XXHASH REQUIRED IMPORTED_TARGET libxxhash)
