@@ -7,6 +7,8 @@ BUILD_TYPE="RelWithDebInfo"
 OPT_C_FLAGS="-O2 -g"
 DO_STRIP=0
 ENABLE_NATIVE=0
+SPARTAN_LTO="${SPARTAN_LTO:-}"
+NINJA_JOBS="${NINJA_JOBS:-}"
 
 for arg in "$@"; do
     case "$arg" in
@@ -14,13 +16,32 @@ for arg in "$@"; do
             BUILD_TYPE="Release"
             OPT_C_FLAGS="-O3 -DNDEBUG -fomit-frame-pointer -fno-math-errno"
             DO_STRIP=1
+            if [[ -z "$SPARTAN_LTO" ]]; then SPARTAN_LTO="OFF"; fi
             ;;
         --native)
             ENABLE_NATIVE=1
             ;;
+-j*)
+            NINJA_JOBS="${arg#-j}"
+            ;;
     esac
 done
 
+# Memory-aware safe concurrency (avoids cc1plus OOM kills on systems with <= 8GB RAM)
+if [[ -z "$NINJA_JOBS" ]]; then
+    TOTAL_MEM_GB=$(awk '/MemTotal/ {print int($2/1024/1024)}' /proc/meminfo 2>/dev/null || echo 8)
+    if [[ $TOTAL_MEM_GB -le 8 ]]; then
+        NINJA_JOBS=2
+    elif [[ $TOTAL_MEM_GB -le 16 ]]; then
+        NINJA_JOBS=4
+    else
+        NINJA_JOBS=$(nproc 2>/dev/null || echo 4)
+    fi
+fi
+
+if [[ -z "$SPARTAN_LTO" ]]; then
+    SPARTAN_LTO="ON"
+fi
 if [[ "$ENABLE_NATIVE" == "1" ]]; then
     OPT_C_FLAGS="$OPT_C_FLAGS -march=native -mtune=native"
 fi
@@ -92,11 +113,19 @@ for patch in gpu/patches/fsr-vulkan/*.patch; do
         git -C gpu/third_party/fsr-vulkan apply "$PWD/$patch"
     fi
 done
+# Clean old cache if switching build type
+if [[ -f out/gpu/CMakeCache.txt ]]; then
+    CURRENT_TYPE=$(grep -E '^CMAKE_BUILD_TYPE:STRING=' out/gpu/CMakeCache.txt | cut -d= -f2 || true)
+    if [[ "$CURRENT_TYPE" != "$BUILD_TYPE" ]]; then
+        rm -rf out/gpu
+    fi
+fi
+
 cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DSPARTAN_PGO="$pgo" \
-    -DSPARTAN_LTO="${SPARTAN_LTO:-ON}" -DSPARTAN_PGO_DIR="$PWD/pgo" >/dev/null
-echo "GPU library: Type $BUILD_TYPE, PGO $pgo, LTO ${SPARTAN_LTO:-ON}"
+    -DSPARTAN_LTO="$SPARTAN_LTO" -DSPARTAN_PGO_DIR="$PWD/pgo" >/dev/null
+echo "GPU library: Type $BUILD_TYPE, PGO $pgo, LTO $SPARTAN_LTO, Jobs: $NINJA_JOBS"
 # A failed GPU build must stop here: an older libspartanportgpu.so would otherwise be used silently.
-if ! ninja -C out/gpu spartanportgpu > out/gpu-build.log 2>&1; then
+if ! ninja -j "$NINJA_JOBS" -C out/gpu spartanportgpu > out/gpu-build.log 2>&1; then
     grep -v '^\[' out/gpu-build.log | tail -40 >&2
     echo 'GPU library build failed (full log: out/gpu-build.log)' >&2; exit 1
 fi
