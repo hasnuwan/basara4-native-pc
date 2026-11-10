@@ -2,6 +2,29 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")"
 mkdir -p out
+# Parse optimization and lightweight flags
+BUILD_TYPE="RelWithDebInfo"
+OPT_C_FLAGS="-O2 -g"
+DO_STRIP=0
+ENABLE_NATIVE=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --lightweight|--release)
+            BUILD_TYPE="Release"
+            OPT_C_FLAGS="-O3 -DNDEBUG -fomit-frame-pointer -fno-math-errno"
+            DO_STRIP=1
+            ;;
+        --native)
+            ENABLE_NATIVE=1
+            ;;
+    esac
+done
+
+if [[ "$ENABLE_NATIVE" == "1" ]]; then
+    OPT_C_FLAGS="$OPT_C_FLAGS -march=native -mtune=native"
+fi
+
 # Windows: MSYS2 CLANG64 (packages in packaging/windows/README.md). The GPU library is static
 # there and CMake links spartanport-probe.exe as well; no PGO (GCC-only flags), LTO off by default.
 case $(uname -s) in
@@ -69,9 +92,9 @@ for patch in gpu/patches/fsr-vulkan/*.patch; do
         git -C gpu/third_party/fsr-vulkan apply "$PWD/$patch"
     fi
 done
-cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSPARTAN_PGO="$pgo" \
+cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DSPARTAN_PGO="$pgo" \
     -DSPARTAN_LTO="${SPARTAN_LTO:-ON}" -DSPARTAN_PGO_DIR="$PWD/pgo" >/dev/null
-echo "GPU library: PGO $pgo, LTO ${SPARTAN_LTO:-ON}"
+echo "GPU library: Type $BUILD_TYPE, PGO $pgo, LTO ${SPARTAN_LTO:-ON}"
 # A failed GPU build must stop here: an older libspartanportgpu.so would otherwise be used silently.
 if ! ninja -C out/gpu spartanportgpu > out/gpu-build.log 2>&1; then
     grep -v '^\[' out/gpu-build.log | tail -40 >&2
@@ -84,15 +107,25 @@ runtime=(src/runtime*.c)
 atrac9=(third_party/LibAtrac9/C/src/*.c)
 if [[ ! -f out/libatrac9.a || -n $(find third_party/LibAtrac9/C/src -newer out/libatrac9.a -name '*.c') ]]; then
     rm -rf out/atrac9 && mkdir -p out/atrac9
-    for source in "${atrac9[@]}"; do "$CC" -std=c99 -O2 -g -w -c "$source" -o "out/atrac9/$(basename "${source%.c}").o"; done
+    for source in "${atrac9[@]}"; do "$CC" -std=c99 $OPT_C_FLAGS -w -c "$source" -o "out/atrac9/$(basename "${source%.c}").o"; done
     ar rcs out/libatrac9.a out/atrac9/*.o
 fi
 # isa_emulate runs inside guest code: no XMM/YMM.
-"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -mgeneral-regs-only -c src/isa_emulate.c -o out/isa_emulate.o
-"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc src/probe.c "${runtime[@]}" src/cpu_check.c src/vulkan_smoke.c out/isa_emulate.o src/isa_rewrite.c out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/spartanport-probe
+"$CC" -std=c11 $OPT_C_FLAGS -Wall -Wextra -Werror -mgeneral-regs-only -c src/isa_emulate.c -o out/isa_emulate.o
+"$CC" -std=c11 $OPT_C_FLAGS -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc src/probe.c "${runtime[@]}" src/cpu_check.c src/vulkan_smoke.c out/isa_emulate.o src/isa_rewrite.c out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/spartanport-probe
 echo "Built $PWD/out/spartanport-probe"
 # GPU check for run.sh (live_resolution=auto): links only the Vulkan loader.
-"$CC" -std=c11 -O2 -Wall -Wextra -Werror -Igpu/shadps4 tools/gpu_capabilities.c "${libraries[@]}" -o out/spartanport-gpu-capabilities
+"$CC" -std=c11 $OPT_C_FLAGS -Wall -Wextra -Werror -Igpu/shadps4 tools/gpu_capabilities.c "${libraries[@]}" -o out/spartanport-gpu-capabilities
+
+if [[ "$DO_STRIP" == "1" ]]; then
+    if command -v strip >/dev/null 2>&1; then
+        echo "Stripping binaries for minimal size..."
+        strip --strip-unneeded out/spartanport-probe out/spartanport-gpu-capabilities 2>/dev/null || true
+        if [[ -f out/gpu/libspartanportgpu.so ]]; then
+            strip --strip-unneeded out/gpu/libspartanportgpu.so 2>/dev/null || true
+        fi
+    fi
+fi
 if [[ ${1:-} == --test ]]; then
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread "${includes[@]}" -I. -Isrc tests/test_pad.c "${libraries[@]}" -o out/pad-test
     out/pad-test
