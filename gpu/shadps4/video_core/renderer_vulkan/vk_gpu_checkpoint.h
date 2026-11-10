@@ -63,7 +63,11 @@ inline std::string WallClock() {
     const auto now = std::chrono::system_clock::now();
     const std::time_t seconds = std::chrono::system_clock::to_time_t(now);
     std::tm local{};
+#ifdef _WIN32
     localtime_s(&local, &seconds);
+#else
+    localtime_r(&seconds, &local);
+#endif
     char text[16];
     std::strftime(text, sizeof(text), "%H:%M:%S", &local);
     return text;
