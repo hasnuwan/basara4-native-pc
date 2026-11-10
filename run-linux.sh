@@ -47,6 +47,7 @@ show_help() {
     echo "  --no-msaa         Matikan MSAA secara paksa"
     echo "  --no-audio        Jalankan tanpa audio (hemat CPU untuk PC sangat rendah)"
     echo "  --game-dir <DIR>  Tentukan lokasi folder game CUSA01159 secara manual"
+    echo "  --check           Periksa kesiapan hardware (CPU instruction set, Gamepad, Display)"
     echo "  --help, -h        Tampilkan bantuan ini"
     echo ""
     echo -e "${C_BOLD}CONTOH:${C_RESET}"
@@ -63,6 +64,7 @@ FORCE_NO_MSAA="1"
 DISABLE_AUDIO="0"
 CUSTOM_GAME_DIR=""
 INTERACTIVE_MENU="0"
+CHECK_ONLY="0"
 
 # Parse CLI arguments
 while [[ $# -gt 0 ]]; do
@@ -102,6 +104,10 @@ while [[ $# -gt 0 ]]; do
         --game-dir)
             CUSTOM_GAME_DIR="$2"
             shift 2
+            ;;
+        --check)
+            CHECK_ONLY="1"
+            shift
             ;;
         --help|-h)
             show_help
@@ -146,11 +152,21 @@ for bin in "${CANDIDATES[@]}"; do
 done
 
 if [[ -z "$PROBE_BIN" ]]; then
-    echo -e "${C_YELLOW}[PERINGATAN] Binary spartanport-probe belum di-build.${C_RESET}"
+    echo -e "${C_RED}[ERROR] Binary spartanport-probe belum di-build.${C_RESET}"
     echo -e "Jalankan build terlebih dahulu dengan:"
     echo -e "  ${C_CYAN}./build.sh --lightweight${C_RESET}"
-    echo ""
-    echo -e "Memeriksa konfigurasi dan lingkungan sistem sekarang..."
+    exit 1
+fi
+
+if [[ "$CHECK_ONLY" == "1" ]]; then
+    echo -e "${C_BOLD}=== PEMERIKSAAN KESIAPAN HARDWARE ===${C_RESET}"
+    echo -n "Instruksi CPU: "
+    "$PROBE_BIN" --cpu-features
+    echo -n "Gamepad / Controller: "
+    "$PROBE_BIN" --gamepad
+    echo "Layar / Display: "
+    "$PROBE_BIN" --displays
+    exit 0
 fi
 
 # 2. Terapkan Preset Konfigurasi ke spartanport.ini
@@ -241,27 +257,22 @@ if [[ -n "$GAME_DIR" ]]; then
     echo -e "${C_GREEN}[+] Folder Game Ditemukan:${C_RESET} $GAME_DIR"
     export SPARTAN_GAME_DIR="$GAME_DIR"
 else
-    echo -e "${C_YELLOW}[!] Game dump belum terdeteksi.${C_RESET}"
+    echo -e "${C_RED}[!] Game dump belum terdeteksi.${C_RESET}"
     echo -e "    Letakkan dump game PS4 Sengoku Basara 4 Sumeragi (CUSA01159)"
-    echo -e "    di dalam folder ${C_CYAN}$SCRIPT_DIR/game/${C_RESET} (pastikan ada file ${C_BOLD}eboot.bin${C_RESET})."
+    echo -e "    di dalam folder: ${C_CYAN}$SCRIPT_DIR/game/${C_RESET} (pastikan ada file ${C_BOLD}eboot.bin${C_RESET})."
+    echo -e "    Atau tentukan lokasinya secara langsung:"
+    echo -e "      ${C_CYAN}./run-linux.sh --game-dir /jalur/ke/game/CUSA01159${C_RESET}"
+    exit 1
 fi
 
 # 5. Jalankan Game
-if [[ -n "$PROBE_BIN" && -x "$PROBE_BIN" ]]; then
-    echo -e "${C_GREEN}[*] Memulai game dengan spartanport-probe...${C_RESET}"
-    
-    # Gunakan gamemode jika terpasang
-    RUNNER=""
-    if command -v gamemoderun >/dev/null 2>&1; then
-        echo -e "${C_GREEN}[+] Feral GameMode terdeteksi & diaktifkan.${C_RESET}"
-        RUNNER="gamemoderun"
-    fi
+mkdir -p "$SCRIPT_DIR/user"
+echo -e "${C_GREEN}[*] Memulai Sengoku Basara 4 Sumeragi dengan spartanport-probe...${C_RESET}"
 
-    exec $RUNNER "$PROBE_BIN" "$@"
-else
-    echo ""
-    echo -e "${C_BOLD}Siap dijalankan setelah kompilasi binary:${C_RESET}"
-    echo -e "  1. Jalankan build: ${C_CYAN}./build.sh --lightweight${C_RESET}"
-    echo -e "  2. Ekstrak game PS4 (CUSA01159) ke folder: ${C_CYAN}$SCRIPT_DIR/game/${C_RESET}"
-    echo -e "  3. Jalankan: ${C_CYAN}./run-linux.sh --lowspec${C_RESET}"
+RUNNER=""
+if command -v gamemoderun >/dev/null 2>&1; then
+    echo -e "${C_GREEN}[+] Feral GameMode terdeteksi & diaktifkan.${C_RESET}"
+    RUNNER="gamemoderun"
 fi
+
+exec $RUNNER "$PROBE_BIN" "$GAME_DIR/eboot.bin" --app0 "$GAME_DIR" --user "$SCRIPT_DIR/user" "$@"
