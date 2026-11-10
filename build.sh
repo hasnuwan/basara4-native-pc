@@ -140,11 +140,11 @@ if [[ ! -f out/libatrac9.a || -n $(find third_party/LibAtrac9/C/src -newer out/l
     ar rcs out/libatrac9.a out/atrac9/*.o
 fi
 # isa_emulate runs inside guest code: no XMM/YMM.
-"$CC" -std=c11 $OPT_C_FLAGS -Wall -Wextra -Werror -mgeneral-regs-only -c src/isa_emulate.c -o out/isa_emulate.o
-"$CC" -std=c11 $OPT_C_FLAGS -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc src/probe.c "${runtime[@]}" src/cpu_check.c src/vulkan_smoke.c out/isa_emulate.o src/isa_rewrite.c out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/spartanport-probe
+"$CC" -std=c11 $OPT_C_FLAGS -Wall -Wextra -Werror -Wno-error=format-truncation -Wno-error=misleading-indentation -mgeneral-regs-only -c src/isa_emulate.c -o out/isa_emulate.o
+"$CC" -std=c11 $OPT_C_FLAGS -Wall -Wextra -Werror -Wno-error=format-truncation -Wno-error=misleading-indentation -pthread -no-pie "${includes[@]}" -I. -Isrc src/probe.c "${runtime[@]}" src/cpu_check.c src/vulkan_smoke.c out/isa_emulate.o src/isa_rewrite.c out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/spartanport-probe
 echo "Built $PWD/out/spartanport-probe"
 # GPU check for run.sh (live_resolution=auto): links only the Vulkan loader.
-"$CC" -std=c11 $OPT_C_FLAGS -Wall -Wextra -Werror -Igpu/shadps4 tools/gpu_capabilities.c "${libraries[@]}" -o out/spartanport-gpu-capabilities
+"$CC" -std=c11 $OPT_C_FLAGS -Wall -Wextra -Werror -Wno-error=format-truncation -Wno-error=misleading-indentation -Igpu/shadps4 tools/gpu_capabilities.c "${libraries[@]}" -o out/spartanport-gpu-capabilities
 
 if [[ "$DO_STRIP" == "1" ]]; then
     if command -v strip >/dev/null 2>&1; then

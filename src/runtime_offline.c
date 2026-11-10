@@ -395,7 +395,8 @@ static ABI int32_t np_poll(int32_t request, int32_t *result) { (void)request; if
 static ABI int32_t voice_endpoint(int32_t *id) { if (!id) return (int32_t)0x80A20001; *id=new_id(); return ORBIS_OK; }
 static ABI int32_t voice_packet(int32_t connection, void *data, uint32_t *size) {
     (void)connection; (void)data;
-    if (size) *size=0; return ORBIS_OK;
+    if (size) *size=0;
+    return ORBIS_OK;
 }
 static ABI int32_t voice_get_attribute(int32_t id, int32_t attribute, void *value, int32_t size) {
     (void)id; (void)attribute;
